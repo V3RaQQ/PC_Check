@@ -8,12 +8,16 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils import executor
 import requests
 import config
+import threading
+import datetime
 
 from SERVER.config import TOKEN
 
 bot = Bot(token=TOKEN)
 
 dp = Dispatcher(bot)
+
+last_status = {'online': False, 'uptime': '', 'start_time': '', 'session_duration': '', 'last_check': None, 'sessions': []}
 
 def get_main_keyboard(pc_online: bool):
     status_sticker = '🟢' if pc_online else '🔴'
@@ -62,29 +66,80 @@ def send_pc_command(cmd):
         pass
     return False
 
+def auto_update_status():
+    while True:
+        pc_online, info = check_pc_status()
+        last_status['online'] = pc_online
+        last_status['last_check'] = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        if pc_online and info:
+            last_status['uptime'] = info.get('uptime', 'Неизвестно')
+            last_status['start_time'] = info.get('start_time', 'Неизвестно')
+            last_status['session_duration'] = info.get('session_duration', last_status['uptime'])
+        else:
+            last_status['uptime'] = ''
+            last_status['start_time'] = ''
+            last_status['session_duration'] = ''
+        threading.Event().wait(300)  # 5 минут
+
+threading.Thread(target=auto_update_status, daemon=True).start()
+
+def get_pc_sessions():
+    try:
+        r = requests.get(f"{config.PC_URL}/sessions", timeout=3)
+        if r.status_code == 200:
+            return r.json().get('sessions', [])
+    except Exception:
+        pass
+    return []
+
 @dp.message_handler(commands=['start'])
 async def start_cmd(message: types.Message):
     if message.from_user.id != getattr(config, 'ADMIN_ID', None):
         await message.answer("Доступ запрещен.")
         return
-    pc_online, info = check_pc_status()
+    pc_online = last_status['online']
     kb, status_sticker = get_main_keyboard(pc_online)
     text = f"ПК {status_sticker}\n"
     if pc_online:
-        uptime = info.get('uptime', 'Неизвестно')
-        text += f"Аптайм: {uptime}"
+        text += f"Аптайм: {last_status['uptime']}\n"
+        text += f"Время старта: {last_status['start_time']}\n"
+        text += f"Длительность сессии: {last_status['session_duration']}\n"
+    else:
+        text += "ПК выключен\n"
     await message.answer(text, reply_markup=kb)
 
 @dp.callback_query_handler(lambda c: c.data == 'refresh')
 async def refresh_cb(call: types.CallbackQuery):
     pc_online, info = check_pc_status()
+    last_status['online'] = pc_online
+    if pc_online and info:
+        last_status['uptime'] = info.get('uptime', 'Неизвестно')
+        last_status['start_time'] = info.get('start_time', 'Неизвестно')
+        last_status['session_duration'] = info.get('session_duration', last_status['uptime'])
     kb, status_sticker = get_main_keyboard(pc_online)
     text = f"ПК {status_sticker}\n"
     if pc_online:
-        uptime = info.get('uptime', 'Неизвестно')
-        text += f"Аптайм: {uptime}"
+        text += f"Аптайм: {last_status['uptime']}\n"
+        text += f"Время старта: {last_status['start_time']}\n"
+        text += f"Длительность сессии: {last_status['session_duration']}\n"
+    else:
+        text += "ПК выключен\n"
     await call.message.edit_text(text, reply_markup=kb)
     await call.answer('Обновлено')
+
+@dp.message_handler(commands=['sessions'])
+async def sessions_cmd(message: types.Message):
+    if message.from_user.id != getattr(config, 'ADMIN_ID', None):
+        await message.answer("Доступ запрещен.")
+        return
+    sessions = get_pc_sessions()
+    if not sessions:
+        await message.answer("Нет данных о сессиях.")
+        return
+    text = 'История сессий ПК:\n'
+    for s in sessions[-10:]:
+        text += f"\nСтарт: {s['start']}\nФиниш: {s['end']}\nДлительность: {s['duration']}\n"
+    await message.answer(text)
 
 @dp.callback_query_handler(lambda c: c.data == 'programs')
 async def programs_cb(call: types.CallbackQuery):

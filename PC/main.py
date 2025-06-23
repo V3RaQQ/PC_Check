@@ -55,10 +55,12 @@ def get_main_programs():
 def status():
     uptime_sec = int(time.time() - session_data['start_time'])
     uptime = str(timedelta(seconds=uptime_sec))
+    session_duration = uptime  
     return jsonify({
         'status': 'online',
         'uptime': uptime,
-        'start_time': datetime.fromtimestamp(session_data['start_time']).strftime('%Y-%m-%d %H:%M:%S')
+        'start_time': datetime.fromtimestamp(session_data['start_time']).strftime('%Y-%m-%d %H:%M:%S'),
+        'session_duration': session_duration
     })
 
 @app.route('/programs')
