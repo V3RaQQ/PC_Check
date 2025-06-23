@@ -6,6 +6,8 @@ from datetime import datetime, timedelta
 from flask import Flask, jsonify
 import psutil
 import subprocess
+import win32gui
+import win32process
 
 SESSION_FILE = 'sessions.json'
 app = Flask(__name__)
@@ -44,11 +46,31 @@ def end_session():
     save_sessions()
 
 def get_main_programs():
+    def is_taskbar_window(hwnd):
+        if not win32gui.IsWindowVisible(hwnd):
+            return False
+        if win32gui.GetParent(hwnd) != 0:
+            return False
+        style = win32gui.GetWindowLong(hwnd, -16)
+        if not (style & 0x10000000):  # WS_VISIBLE
+            return False
+        if win32gui.GetWindowText(hwnd) == '':
+            return False
+        return True
+
+    hwnds = []
+    win32gui.EnumWindows(lambda hwnd, param: param.append(hwnd) if is_taskbar_window(hwnd) else None, hwnds)
+    pids = set()
+    for hwnd in hwnds:
+        try:
+            _, pid = win32process.GetWindowThreadProcessId(hwnd)
+            pids.add(pid)
+        except Exception:
+            pass
     names = set()
-    for proc in psutil.process_iter(['name']):
-        name = proc.info['name']
-        if name and name.lower() not in ['system idle process', 'system', 'svchost.exe', 'explorer.exe', 'python.exe', 'pythonw.exe']:
-            names.add(name)
+    for proc in psutil.process_iter(['pid', 'name']):
+        if proc.info['pid'] in pids:
+            names.add(proc.info['name'])
     return sorted(list(names))
 
 @app.route('/status')
